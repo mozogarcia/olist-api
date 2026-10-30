@@ -1,11 +1,3 @@
-import os
-# Forzar a las librerías a usar solo 1 hilo para no saturar la RAM de Render
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 import gc
 import json
 from pathlib import Path
@@ -19,13 +11,15 @@ from preparacion import crear_variables
 
 CARPETA = Path(__file__).resolve().parent
 
-# Cargar modelo y umbral
+# Cargar artefactos
 modelo = joblib.load(CARPETA / "modelo_riesgo.joblib")
 
 with open(CARPETA / "umbral_riesgo.json", "r", encoding="utf-8") as archivo:
-    umbral = json.load(archivo)["umbral_riesgo"]
+    config_umbral = json.load(archivo)
+    umbral = float(config_umbral["umbral_riesgo"])
 
 app = FastAPI(title="API de riesgo de malas reseñas")
+
 
 class PedidoContrato(BaseModel):
     order_id: Optional[str] = "test_123"
@@ -46,28 +40,36 @@ class PedidoContrato(BaseModel):
     tipo_pago: Optional[str] = None
     cuotas_max: Optional[float] = Field(None, ge=0.0)
 
+
 @app.get("/")
 def inicio():
     return {"mensaje": "API de riesgo de malas reseñas activa", "estado": "ok"}
 
+
 @app.post("/riesgo")
 def predecir_riesgo(pedido: PedidoContrato):
     try:
-        # Convertir a DataFrame procesando 1 solo registro
-        datos = pd.DataFrame([pedido.model_dump()])
-        variables = crear_variables(datos)
+        # Convertir datos de entrada
+        datos_dict = pedido.model_dump()
+        df_entrada = pd.DataFrame([datos_dict])
+
+        # Crear variables
+        X_proc = crear_variables(df_entrada)
 
         # Inferencia
-        probabilidad = float(modelo.predict_proba(variables)[0, 1])
+        prob_array = modelo.predict_proba(X_proc)
+        probabilidad = float(prob_array[0, 1])
 
-        # Limpieza activa e inmediata de RAM
-        del datos, variables
+        # Liberar memoria
+        del df_entrada, X_proc, datos_dict
         gc.collect()
 
         return {
             "probabilidad": round(probabilidad, 4),
             "riesgo_alto": bool(probabilidad >= umbral),
-            "umbral_riesgo": round(float(umbral), 4)
+            "umbral_riesgo": round(umbral, 4),
         }
     except Exception as error:
-        raise HTTPException(status_code=500, detail=f"Error en inferencia: {str(error)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error en el cálculo: {str(error)}"
+        )
