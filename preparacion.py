@@ -1,48 +1,15 @@
-# Encabezado: preparar variables para el modelo de riesgo
-
 import numpy as np
 import pandas as pd
 
 
-def crear_variables(datos):
+def crear_variables(datos: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma las columnas del contrato en variables predictoras.
-    La predicción se realiza en el momento de la entrega del pedido.
+    Transforma las columnas del contrato en variables predictoras limpias.
+    Garantiza la ausencia de NaNs e infinitos.
     """
-
     datos = datos.copy()
 
-    columnas_requeridas = [
-        "order_purchase_timestamp",
-        "order_approved_at",
-        "order_delivered_carrier_date",
-        "order_delivered_customer_date",
-        "order_estimated_delivery_date",
-        "estado_cliente",
-        "n_items",
-        "n_vendedores",
-        "precio_total",
-        "flete_total",
-        "peso_total_g",
-        "fotos_promedio",
-        "categoria",
-        "estado_vendedor",
-        "tipo_pago",
-        "cuotas_max",
-    ]
-
-    faltantes = [
-        columna
-        for columna in columnas_requeridas
-        if columna not in datos.columns
-    ]
-
-    if faltantes:
-        raise ValueError(
-            f"Faltan columnas requeridas del contrato: {faltantes}"
-        )
-
-    # Convertir fechas
+    # Convertir fechas a datetime
     columnas_fechas = [
         "order_purchase_timestamp",
         "order_approved_at",
@@ -51,35 +18,30 @@ def crear_variables(datos):
         "order_estimated_delivery_date",
     ]
 
-    for columna in columnas_fechas:
-        datos[columna] = pd.to_datetime(
-            datos[columna],
-            errors="coerce"
-        )
+    for col in columnas_fechas:
+        if col in datos.columns:
+            datos[col] = pd.to_datetime(datos[col], errors="coerce")
 
     variables = pd.DataFrame(index=datos.index)
 
-    # Variables de tiempo con imputación segura de Nulos (0.0 por defecto si no existe la fecha)
+    # Variables de tiempo con imputación por defecto (0.0 si la fecha es nula)
     variables["dias_desde_compra"] = (
-        datos["order_delivered_customer_date"]
-        - datos["order_purchase_timestamp"]
+        datos["order_delivered_customer_date"] - datos["order_purchase_timestamp"]
     ).dt.total_seconds().fillna(0.0) / 86400.0
 
     variables["horas_hasta_aprobacion"] = (
-        datos["order_approved_at"]
-        - datos["order_purchase_timestamp"]
+        datos["order_approved_at"] - datos["order_purchase_timestamp"]
     ).dt.total_seconds().fillna(0.0) / 3600.0
 
     variables["dias_hasta_transportista"] = (
-        datos["order_delivered_carrier_date"]
-        - datos["order_approved_at"]
+        datos["order_delivered_carrier_date"] - datos["order_approved_at"]
     ).dt.total_seconds().fillna(0.0) / 86400.0
 
     variables["dias_retraso"] = (
-        datos["order_delivered_customer_date"]
-        - datos["order_estimated_delivery_date"]
+        datos["order_delivered_customer_date"] - datos["order_estimated_delivery_date"]
     ).dt.total_seconds().fillna(0.0) / 86400.0
 
+    # Mes y día de la semana
     variables["mes_compra"] = (
         datos["order_purchase_timestamp"].dt.month.fillna(1).astype(int)
     )
@@ -88,7 +50,7 @@ def crear_variables(datos):
         datos["order_purchase_timestamp"].dt.dayofweek.fillna(0).astype(int)
     )
 
-    # Variables numéricas del pedido (imputación de nulos a 0)
+    # Variables numéricas
     columnas_numericas = [
         "n_items",
         "n_vendedores",
@@ -99,11 +61,11 @@ def crear_variables(datos):
         "cuotas_max",
     ]
 
-    for columna in columnas_numericas:
-        variables[columna] = pd.to_numeric(
-            datos[columna],
-            errors="coerce"
-        ).fillna(0.0)
+    for col in columnas_numericas:
+        if col in datos.columns:
+            variables[col] = pd.to_numeric(datos[col], errors="coerce").fillna(0.0)
+        else:
+            variables[col] = 0.0
 
     # Variables categóricas
     columnas_categoricas = [
@@ -113,14 +75,13 @@ def crear_variables(datos):
         "tipo_pago",
     ]
 
-    for columna in columnas_categoricas:
-        variables[columna] = (
-            datos[columna]
-            .fillna("Desconocido")
-            .astype(str)
-        )
+    for col in columnas_categoricas:
+        if col in datos.columns:
+            variables[col] = datos[col].fillna("Desconocido").astype(str)
+        else:
+            variables[col] = "Desconocido"
 
-    # Evitar infinitos o NaNs residuales
+    # Reemplazar infinitos y nulos residuales
     variables = variables.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     return variables
