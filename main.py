@@ -1,10 +1,12 @@
-
+import gc
 import json
 from pathlib import Path
+from typing import Optional
 
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from preparacion import crear_variables
 
 # Carpeta donde están los archivos de la API
@@ -22,25 +24,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Columnas requeridas para preparar las variables
-COLUMNAS_REQUERIDAS = [
-    "order_purchase_timestamp",
-    "order_approved_at",
-    "order_delivered_carrier_date",
-    "order_delivered_customer_date",
-    "order_estimated_delivery_date",
-    "estado_cliente",
-    "n_items",
-    "n_vendedores",
-    "precio_total",
-    "flete_total",
-    "peso_total_g",
-    "fotos_promedio",
-    "categoria",
-    "estado_vendedor",
-    "tipo_pago",
-    "cuotas_max",
-]
+# Esquema Pydantic para validar y mapear los campos requeridos
+class PedidoContrato(BaseModel):
+    order_id: Optional[str] = "test_123"
+    order_purchase_timestamp: str
+    order_approved_at: Optional[str] = None
+    order_delivered_carrier_date: Optional[str] = None
+    order_delivered_customer_date: Optional[str] = None
+    order_estimated_delivery_date: str
+    estado_cliente: str
+    n_items: int = Field(..., ge=1)
+    n_vendedores: int = Field(..., ge=1)
+    precio_total: float = Field(..., ge=0.0)
+    flete_total: float = Field(..., ge=0.0)
+    peso_total_g: Optional[float] = Field(None, ge=0.0)
+    fotos_promedio: Optional[float] = Field(None, ge=0.0)
+    categoria: Optional[str] = None
+    estado_vendedor: str
+    tipo_pago: Optional[str] = None
+    cuotas_max: Optional[float] = Field(None, ge=0.0)
 
 
 @app.get("/")
@@ -52,29 +54,22 @@ def inicio():
 
 
 @app.post("/riesgo")
-def predecir_riesgo(pedido: dict):
-    # Verificar que el pedido incluya todas las columnas necesarias
-    faltantes = [
-        columna
-        for columna in COLUMNAS_REQUERIDAS
-        if columna not in pedido
-    ]
-
-    if faltantes:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Faltan columnas requeridas: {faltantes}"
-        )
-
+def predecir_riesgo(pedido: PedidoContrato):
     try:
-        # Convertir el pedido en DataFrame
-        datos = pd.DataFrame([pedido])
+        # Convertir el objeto Pydantic a diccionario y luego a DataFrame
+        datos_dict = pedido.model_dump()
+        datos = pd.DataFrame([datos_dict])
 
         # Aplicar la preparación de variables del proyecto
         variables = crear_variables(datos)
 
         # Calcular la probabilidad de una mala reseña
-        probabilidad = float(modelo.predict_proba(variables)[0, 1])
+        prob_array = modelo.predict_proba(variables)
+        probabilidad = float(prob_array[0, 1])
+
+        # Liberar memoria para evitar que Render mate el proceso (502 Bad Gateway)
+        del datos, variables, datos_dict
+        gc.collect()
 
         return {
             "probabilidad": round(probabilidad, 4),
@@ -82,8 +77,6 @@ def predecir_riesgo(pedido: dict):
             "umbral_riesgo": round(float(umbral), 4)
         }
 
-    except HTTPException:
-        raise
     except Exception as error:
         raise HTTPException(
             status_code=500,
