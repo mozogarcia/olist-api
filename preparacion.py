@@ -42,7 +42,7 @@ def crear_variables(datos):
             f"Faltan columnas requeridas del contrato: {faltantes}"
         )
 
-    # Convertir fechas sin inventar valores faltantes
+    # Convertir fechas
     columnas_fechas = [
         "order_purchase_timestamp",
         "order_approved_at",
@@ -59,36 +59,36 @@ def crear_variables(datos):
 
     variables = pd.DataFrame(index=datos.index)
 
-    # Variables de tiempo
+    # Variables de tiempo con imputación segura de Nulos (0.0 por defecto si no existe la fecha)
     variables["dias_desde_compra"] = (
         datos["order_delivered_customer_date"]
         - datos["order_purchase_timestamp"]
-    ).dt.total_seconds() / 86400
+    ).dt.total_seconds().fillna(0.0) / 86400.0
 
     variables["horas_hasta_aprobacion"] = (
         datos["order_approved_at"]
         - datos["order_purchase_timestamp"]
-    ).dt.total_seconds() / 3600
+    ).dt.total_seconds().fillna(0.0) / 3600.0
 
     variables["dias_hasta_transportista"] = (
         datos["order_delivered_carrier_date"]
         - datos["order_approved_at"]
-    ).dt.total_seconds() / 86400
+    ).dt.total_seconds().fillna(0.0) / 86400.0
 
     variables["dias_retraso"] = (
         datos["order_delivered_customer_date"]
         - datos["order_estimated_delivery_date"]
-    ).dt.total_seconds() / 86400
+    ).dt.total_seconds().fillna(0.0) / 86400.0
 
     variables["mes_compra"] = (
-        datos["order_purchase_timestamp"].dt.month
+        datos["order_purchase_timestamp"].dt.month.fillna(1).astype(int)
     )
 
     variables["dia_semana_compra"] = (
-        datos["order_purchase_timestamp"].dt.dayofweek
+        datos["order_purchase_timestamp"].dt.dayofweek.fillna(0).astype(int)
     )
 
-    # Variables numéricas del pedido
+    # Variables numéricas del pedido (imputación de nulos a 0)
     columnas_numericas = [
         "n_items",
         "n_vendedores",
@@ -103,7 +103,7 @@ def crear_variables(datos):
         variables[columna] = pd.to_numeric(
             datos[columna],
             errors="coerce"
-        )
+        ).fillna(0.0)
 
     # Variables categóricas
     columnas_categoricas = [
@@ -120,10 +120,7 @@ def crear_variables(datos):
             .astype(str)
         )
 
-    # Evitar valores infinitos
-    variables = variables.replace(
-        [np.inf, -np.inf],
-        np.nan
-    )
+    # Evitar infinitos o NaNs residuales
+    variables = variables.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     return variables
